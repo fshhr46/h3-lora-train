@@ -32,10 +32,22 @@ A complete pipeline for training LoRA adapters on video generation models. Extra
 
 ## Quick Start
 
-### Step 1: Install Dependencies
+### Step 1: Setup Environment with uv
 
 ```bash
-pip install -r requirements.txt
+# Install uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or use the bundled version
+export PATH="/path/to/.uv:$PATH"
+
+# Create virtual environment and install dependencies
+uv venv .venv --python 3.13
+source .venv/bin/activate
+uv pip install -r requirements.txt
+
+# Alternatively, let uv manage everything
+uv sync
 ```
 
 ### Step 2: Collect Training Data

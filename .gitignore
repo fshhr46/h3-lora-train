@@ -6,9 +6,14 @@ dist/
 build/
 *.egg
 
-# Virtual environment
-venv/
+# Virtual environments
 .venv/
+venv/
+
+# uv
+.venv/
+.cache/
+.uv/
 
 # IDE
 .vscode/
@@ -18,7 +23,7 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Training outputs (optional, keep models)
+# Training outputs
 # output/models/*.pth
 # output/models/*.bin
 
@@ -27,3 +32,6 @@ data/raw/*.mp4
 data/cropped/*.png
 data/temporal/*.npy
 data/framediff/*.png
+
+# Data collection
+data/raw/xvideos/*.mp4
