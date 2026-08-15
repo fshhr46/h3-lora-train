@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs (optional, keep models)
+# output/models/*.pth
+# output/models/*.bin
+
+# Data
+data/raw/*.mp4
+data/cropped/*.png
+data/temporal/*.npy
+data/framediff/*.png
