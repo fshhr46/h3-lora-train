@@ -1,5 +1,5 @@
-# 负向提示词模板
-# 用于训练和生成时排除不需要的内容
+# Negative prompt templates
+# Used during training and generation to exclude unwanted content
 
 low quality
 worst quality
@@ -33,7 +33,7 @@ lowres
 monochrome
 grayscale
 
-# 不需要的服装类型
+# Unwanted clothing
 jacket
 coat
 hoodie
@@ -45,7 +45,7 @@ glasses
 hat
 cap
 
-# 不需要的场景
+# Unwanted scenes
 crowd
 street scene
 busy background

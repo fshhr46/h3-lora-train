@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-素材收集脚本 - 从 YouTube/Twitter/Reddit 收集视频素材
-支持自动下载、抽帧、裁剪
+Video data collection script - download videos from various sources
+Supports YouTube, Xvideos, SpankWire, Reddit, RedGifs
 
-使用方法:
-    python collect.py --source youtube --keywords "beautiful woman,bikini" --count 20
-    python collect.py --source twitter --keywords "anime girl" --count 20
+Usage:
+    python collect.py --source youtube --keywords "slow motion,dance" --count 20
+    python collect.py --source xvideos --keywords "bikini,lingerie,wet" --count 20
     python collect.py --source reddit --subreddit "facelesspods" --count 20
 """
 
@@ -41,7 +41,7 @@ except ImportError:
 # ============================================================
 
 class YouTubeCollector:
-    """从 YouTube 收集视频素材"""
+    """Download videos from YouTube"""
 
     def __init__(self, output_dir, quality='bestvideo'):
         self.output_dir = Path(output_dir)
@@ -116,7 +116,7 @@ class YouTubeCollector:
 # ============================================================
 
 class TwitterCollector:
-    """从 Twitter 收集视频素材"""
+    """Download videos from Twitter/X"""
 
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
@@ -178,7 +178,7 @@ class TwitterCollector:
 # ============================================================
 
 class RedditCollector:
-    """从 Reddit 收集视频素材"""
+    """Download videos from Reddit"""
 
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
@@ -234,7 +234,7 @@ class RedditCollector:
 # ============================================================
 
 class RedGifsCollector:
-    """从 RedGifs 收集成人短视频素材"""
+    """Download short-form videos from RedGifs"""
 
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir) / 'redgifs'
@@ -317,7 +317,7 @@ class RedGifsCollector:
 # ============================================================
 
 class XvideosCollector:
-    """从 Xvideos 收集视频素材"""
+    """Download videos from Xvideos"""
 
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir) / 'xvideos'
@@ -378,7 +378,7 @@ class XvideosCollector:
 # ============================================================
 
 class SpankWireCollector:
-    """从 SpankWire 收集短片段素材"""
+    """Download short clips from SpankWire"""
 
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir) / 'spankwire'
@@ -442,22 +442,22 @@ def main():
     parser = argparse.ArgumentParser(description='视频素材收集器')
     parser.add_argument('--source', type=str, required=True,
                         choices=['youtube', 'twitter', 'reddit', 'redgifs', 'xvideos', 'spankwire'],
-                        help='数据源')
+                        help='Data source')
     parser.add_argument('--keywords', type=str, default='beautiful woman,slow motion',
-                        help='搜索关键词（逗号分隔）')
+                        help='Search keywords (comma-separated)')
     parser.add_argument('--subreddit', type=str, default='facelesspods',
-                        help='Reddit subreddit 名称')
+                        help='Reddit subreddit name')
     parser.add_argument('--count', type=int, default=20,
-                        help='每个关键词下载数量')
+                        help='Number of videos per keyword')
     parser.add_argument('--output', type=str, default='data/raw',
-                        help='输出目录')
+                        help='Output directory')
     args = parser.parse_args()
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"📥 素材收集器 - 源: {args.source}")
-    print(f"   输出: {output_dir}")
+    print(f"📥 Video Collector - Source: {args.source}")
+    print(f"   Output: {output_dir}")
     print("=" * 60)
 
     if args.source == 'youtube':
@@ -483,8 +483,8 @@ def main():
         return
 
     print("\n" + "=" * 60)
-    print(f"✅ 共下载 {collected} 个视频到 {output_dir}")
-    print("\n下一步: 运行预处理脚本")
+    print(f"✅ Downloaded {collected} videos to {output_dir}")
+    print("\nNext: Run preprocessing")
     print("   python preprocess.py --input data/raw --output data/cropped")
 
 

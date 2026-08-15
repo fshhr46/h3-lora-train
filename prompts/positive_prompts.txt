@@ -1,14 +1,14 @@
-# 正向提示词模板
-# 用于训练数据 captioning 和 LoRA 生成
+# Positive prompt templates for LoRA training
+# Used for data captioning and generation
 
-# 基础描述
+# Base description
 beautiful woman
 attractive female
 young woman
 elegant lady
 gorgeous woman
 
-# 身体/姿态
+# Body / pose
 graceful pose
 curvy figure
 slim figure
@@ -16,7 +16,7 @@ beautiful silhouette
 gentle movement
 relaxed posture
 
-# 服装/材质
+# Clothing / material
 silky dress
 satin dress
 thin cotton shirt
@@ -27,7 +27,7 @@ evening gown
 tight dress
 flowing dress
 
-# 服装状态
+# Clothing state
 dress slightly lifted
 shirt clinging to body
 wet fabric
@@ -37,7 +37,7 @@ fabric draping
 dress falling open
 straps slipping
 
-# 场景/环境
+# Scene / environment
 bedroom morning light
 sunset beach
 rainy street
@@ -47,7 +47,7 @@ garden sunlight
 poolside
 bathroom steam
 
-# 光影/风格
+# Lighting / style
 cinematic lighting
 soft focus
 bokeh background
@@ -58,7 +58,7 @@ natural lighting
 film grain
 slow motion
 
-# 镜头
+# Camera
 close up
 medium shot
 portrait angle

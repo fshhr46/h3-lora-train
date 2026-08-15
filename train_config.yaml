@@ -3,6 +3,7 @@
 # ============================================
 
 # 基础模型
+# Base diffusion model for LoRA training
 base_model: "stabilityai/stable-diffusion-xl-base-1.0"
 # 或 SD1.5: "runwayml/stable-diffusion-v1-5"
 
