@@ -33,15 +33,8 @@ try:
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
-    print("⚠️  OpenCV not installed, installing...")
-    import subprocess
-    subprocess.run(['pip', 'install', 'opencv-python-headless'], check=False)
-    try:
-        import cv2
-        HAS_CV2 = True
-    except ImportError:
-        HAS_CV2 = False
-        print("⚠️  OpenCV still not available, using PIL fallback (slower)")
+    print("⚠️  OpenCV 未安装")
+    print("   安装: pip install opencv-python")
 
 
 # ============================================================
@@ -129,22 +122,14 @@ def extract_images(video_dir, output_dir, fps_target=8, resolution=(512, 512),
         while frame_idx < total_frames and extracted < max_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
-            if not ret or frame is None:
+            if not ret:
                 break
-            
-            if frame.size == 0 or frame.shape[0] == 0:
-                frame_idx += sample_interval
-                continue
 
             if frame_idx % sample_interval == 0:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                 # 裁剪
                 h, w = frame_rgb.shape[:2]
-                if h == 0 or w == 0:
-                    frame_idx += sample_interval
-                    continue
-
                 target_w, target_h = resolution
                 if w / h < target_w / target_h:
                     new_w, new_h = w, int(w * target_h / target_w)
@@ -154,10 +139,6 @@ def extract_images(video_dir, output_dir, fps_target=8, resolution=(512, 512),
                 left = (new_w - target_w) // 2
                 top = (new_h - target_h) // 2
                 cropped = frame_rgb[top:top+target_h, left:left+target_w]
-
-                if cropped.size == 0:
-                    frame_idx += sample_interval
-                    continue
 
                 # 保存为 PNG
                 output_path = output_dir / f"{video_path.stem}_frame_{extracted:04d}.png"
@@ -357,7 +338,7 @@ def extract_frame_diff(video_dir, output_dir, resolution=(256, 256)):
 def main():
     parser = argparse.ArgumentParser(
         description='增强版预处理脚本',
-        formatter_class=argparse.RawTextHelpFormatter
+        formatter_class=argparse.RawTextHelp
     )
     parser.add_argument('--mode', type=str, required=True,
                         choices=['images', 'temporal', 'framediff'],
