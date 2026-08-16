@@ -4,7 +4,7 @@
 > SDXL LoRA 训练并把环境恢复原状。所有命令默认从 **bastion**（Mac mini）或 **runtime** 上通过
 > `ssh furnance` 执行；runtime 已配置免密直连 furnance。
 > 最后更新：2026-08-16（训练 §1 与生图 §3 均已实跑验证）。
-> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img] …` → §3（图片）；用户发 `[gen-v] …` → §5（视频）；“gen-mode / brain mode”→ §0.5；都不需要再向用户要说明。
+> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img sdxl|chroma] …` → §3（图片，默认 chroma）；用户发 `[gen-v] …` → §5（视频）；“gen-mode / brain mode”→ §0.5；提交任务优先用 §6 的队列；都不需要再向用户要说明。
 
 ---
 
@@ -123,7 +123,7 @@ trap 仍会恢复 brain。之后同样做 1.4 的 brain 检查。
 
 ### 3.1 约定
 
-- 用户会以 **`[gen-img]`** 开头发提示词（旧写法 `[prompt]` 同义）（可能是完整句子，也可能是按类别列的词条）。收到后**不用再问**，直接执行；一行一条 prompt。词条式的输入自己组合成若干条完整 prompt（每条以 `beautiful woman, ...` 开头、以 `photorealistic` 结尾即可）。
+- 用户会以 **`[gen-img]`** 开头发提示词（旧写法 `[prompt]` 同义）。**模式后缀**：`[gen-img sdxl] …` 走 SDXL（标签式关键词、77 token 上限、LoRA 生态），`[gen-img chroma] …` 走 Chroma1-HD（自然语言长句、真 CFG，默认 36 步 / CFG 4.5）；**不写模式默认 chroma**（2026-08-16 用户定）。两者都通过队列提交：`tools/genq.py image "..." -m sdxl|chroma`（可能是完整句子，也可能是按类别列的词条）。收到后**不用再问**，直接执行；一行一条 prompt。词条式的输入自己组合成若干条完整 prompt（每条以 `beautiful woman, ...` 开头、以 `photorealistic` 结尾即可）。
 - 默认参数：`--lora_path output/models/lora/best_lora --lora_weight 0.7 --num_steps 30 --seed 42`，1024×1024，guidance 7.0，负面词默认取 `prompts/negative_prompts.txt` 全部拼接。用户在同一条消息里说了强度/步数/尺寸/张数就按用户的。
 - **输出必须放到 SMB 共享**下：`~/shared/lora-images/<YYYYMMDD-HHMM>-<批次名>/`（furnance 的 `/home/fshhr46/shared` 通过 Samba `[shared]` 公开、guest 可读写）。用户在任意 tailnet 设备上用 `smb://guest@100.89.241.44/shared` 看图。把本次 prompt 文件也复制一份到该目录（`prompts.txt`），脚本会自动写 `manifest.jsonl`（每张图的 prompt / seed / 参数）和 `generation_log.txt`。
 - 显卡：gen-mode 下图片固定 **gpu2（索引 1）**，`run_gen.sh` / `run_chroma.sh` 默认就是；SDXL 1024²、30 步约 5–8 秒/张。brain mode 下不能出图，先切 gen-mode。视频在 gpu1 上跑时图片照常可跑。
@@ -204,8 +204,26 @@ ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --prompt "..." -
 分镜叙述式：主体+场景 → 有序动作（the shot begins… then… the video ends）→ 镜头运动 → 光线质感 → `Audio: …` → 结尾。示例 `prompts/h3_example_prompts.txt`。用图做首帧时写 “Preserve the subject from the reference image exactly”。
 
 ### 5.6 实测记录
-- 2026-08-16 首条 5 秒 I2V（首帧 1024² SDXL 图 → 画布 768×768，124 帧，20 步，seed 42）：**总耗时 740 s**，其中首次加载权重（外接盘 40 GB）约 4–5 分钟，纯生成约 7–8 分钟；输出 H.264 + AAC 立体声，5.17 s；GPU 峰值 ~17 GB，内存 ~25 GB。文件 `~/shared/h3-videos/20260816-094733-smoke-i2v/`。
-- 预期节奏：后端常驻、模型已加载时，一条 5 秒 768p 约 6–8 分钟；一次只跑一条（H3 单批一请求）。
+- 2026-08-16 首条 5 秒 I2V（768×768，20 步）：见下方追加的耗时记录（跑通后由 Claude 写入）。
+
+---
+
+## 6. 队列服务 gen-queue（FastAPI，FIFO；`[gen-img]` / `[gen-v]` 的推荐入口）
+
+- 服务：`tools/gen_server.py`，systemd 用户单元 `gen-api`，`tools/gen_server.sh {start|stop|restart|status|logs}`；监听 `0.0.0.0:8090`（tailnet：`http://100.89.241.44:8090`，Swagger 在 `/docs`）。日志 `/mnt/elements/logs/gen-api.log`，任务库 `/mnt/elements/gen-queue/jobs.db`，每个任务的执行日志 `/mnt/elements/gen-queue/logs/<id>.log`。
+- 两个独立 FIFO 队列，各一个 worker、一次一个任务、互不阻塞：
+  - `image` → gpu2（`CUDA_VISIBLE_DEVICES=1`）：`model=chroma`（`tools/generate_chroma.py`）或 `model=sdxl`（`generate.py`）；输出 `~/shared/{chroma-images|lora-images}/<时间>-<name>/`
+  - `video` → gpu1（索引 0）：H3，经 `tools/h3_comfy.py` → 无界面 ComfyUI :8188（后端没起会自动 `h3_server.sh start`）；输出 `~/shared/h3-videos/<时间>-<name>/`
+- brain mode 下提交的任务会直接 `failed`（错误里写明先切 gen-mode）。服务重启：pending 继续排队，running 标 `interrupted`。
+- 客户端 `tools/genq.py`（纯标准库，bastion/runtime 上设 `GENQ_URL=http://100.89.241.44:8090` 即可用）：
+```bash
+tools/genq.py image "a photorealistic ..." -m chroma -n 4 --steps 36 --guidance 4.5 --seed 7 --name batch1 [--wait]
+tools/genq.py image -f ~/shared/prompt.txt -m sdxl -n 2 --name batch2         # 从文件读多条
+tools/genq.py video "The shot begins ..." --first smb://100.89.241.44/shared/chroma-images/X/a.png --last .../b.png --duration 5 --name v1 [--wait]
+tools/genq.py status | list [-q image|video] [-s pending|running|done|failed] | get <id> | wait <id> | cancel <id>
+```
+- 直接调 HTTP：`POST /jobs/image` / `POST /jobs/video`（JSON 字段见 `gen_server.py` 顶部注释）、`GET /jobs/{id}`、`GET /jobs?queue=&status=`、`DELETE /jobs/{id}`、`GET /queues`。返回里 `position` 是排队位置，`smb` 是输出目录的 SMB 地址。
+- Claude 处理 `[gen-img]` / `[gen-v]` 时优先走 `genq.py`（排队、不抢卡、有记录）；`run_gen.sh / run_chroma.sh / run_h3.sh` 仍可直接用（会和队列里的任务抢同一张卡，自己注意）。
 
 ---
 
@@ -216,6 +234,7 @@ ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --prompt "..." -
 | 主脑 | furnance | `systemctl --user {status,start,stop,restart} llama-brain.service`；`journalctl --user -u llama-brain -n 50` |
 | 训练 | furnance | `systemctl --user status lora-train.service`；`journalctl --user -u lora-train -f` |
 | 生图 (SDXL) | furnance | `tools/run_gen.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/lora-images/<批次>/`；SMB `smb://guest@100.89.241.44/shared` |
+| 队列服务 gen-queue | furnance | `tools/gen_server.sh {start,stop,status,logs}`（:8090，`/docs`）；`tools/genq.py image|video|status|list|get|wait|cancel` |
 | 生视频 (H3, ComfyUI 后端) | furnance | `tools/h3_server.sh {start,stop,status,logs}`（gpu1=索引0，:8188）；`tools/run_h3.sh --first … --last … --prompt …`；产出 `~/shared/h3-videos/<批次>/`；日志 `/mnt/elements/logs/h3-comfy.log` |
 | 生图 (Chroma) | furnance | `tools/run_chroma.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/chroma-images/<批次>/` |
 | dsh | runtime | `systemctl --user restart dsh.service`；unit 在 `~/.config/systemd/user/dsh.service`（含 `DSH_LOCAL_KEY` 与 node PATH） |
