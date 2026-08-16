@@ -33,3 +33,11 @@ data/raw/xvideos/*.mp4
 
 # Logs
 *.log
+
+# 本地模型缓存 / 训练产出 / 备份
+.models/
+output/
+data/cropped/*.jpg
+data/cropped_small/
+*.orig
+*.v1

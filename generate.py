@@ -1,226 +1,157 @@
 #!/usr/bin/env python3
 """
-使用训练好的 LoRA 权重生成测试视频
-支持导出为 H3 平台可使用的格式
+使用训练好的 SDXL LoRA（PEFT 适配器）生成测试图片。
 
-使用方法:
-    python generate.py --lora_path output/models/final_lora --prompt "beautiful woman in silk dress" --output output/videos
+与 train_lora.py 配套：
+  - 基础模型从项目 .models/ 里的 HF 缓存离线加载（StableDiffusionXLPipeline）
+  - LoRA 是 train_lora.py 用 unet.save_pretrained() 存的 PEFT 目录
+    （adapter_config.json + adapter_model.safetensors），用 PeftModel 注入回 UNet
+  - --lora_weight 通过 cross_attention_kwargs={"scale": w} 控制强度
+
+使用方法（在 furnance 上，需先停 llama-brain 腾出显卡，见 operation.md §3）:
+    python generate.py --lora_path output/models/lora/best_lora \
+        --prompts prompts/positive_prompts.txt --output output/videos \
+        --lora_weight 0.7 --num_steps 30 --seed 42
 """
 
 import argparse
+import glob
+import json
 import os
 import sys
-import json
 from pathlib import Path
 
 try:
     import torch
-    from diffusers import StableDiffusionPipeline
-    from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
-    from PIL import Image
-    import numpy as np
+    from diffusers import StableDiffusionXLPipeline
+    from peft import PeftModel
 except ImportError as e:
-    print(f"缺少依赖: {e}")
+    print(f"❌ 缺少依赖: {e}")
+    print("   pip install torch diffusers peft transformers")
     sys.exit(1)
 
 
-# ============================================================
-# LoRA 加载与推理
-# ============================================================
+def resolve_base_model(base_model: str) -> str:
+    """把 HF repo id 解析成项目 .models/ 缓存里的 snapshot 目录（离线）。已是本地目录则原样返回。"""
+    if os.path.isdir(base_model) and os.path.exists(os.path.join(base_model, "model_index.json")):
+        return base_model
+    here = Path(__file__).resolve().parent
+    repo_dir = "models--" + base_model.replace("/", "--")
+    for cache in (here / ".models", Path.home() / ".cache" / "huggingface" / "hub"):
+        snaps = sorted(glob.glob(str(cache / repo_dir / "snapshots" / "*")))
+        if snaps:
+            return snaps[-1]
+    print(f"❌ 在 .models/ 或 ~/.cache/huggingface/hub 里找不到 {base_model} 的缓存")
+    sys.exit(1)
+
+
+def load_prompt_file(path, joiner=None):
+    p = Path(path)
+    if not p.is_file():
+        return None
+    lines = [l.strip() for l in p.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    if joiner is not None:
+        return joiner.join(lines)
+    return lines
+
 
 class LoRAImageGenerator:
-    """LoRA 图像生成器（用于快速测试）"""
-
-    def __init__(self, base_model, lora_path, device='cuda'):
+    def __init__(self, base_model, lora_path, device="cuda"):
         self.device = torch.device(device)
+        dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+        snapshot = resolve_base_model(base_model)
         print(f"🖥️  设备: {self.device}")
+        print(f"📦 基础模型: {snapshot}")
 
-        # 加载基础管道
-        print(f"📦 加载基础模型: {base_model}")
-        self.pipe = StableDiffusionPipeline.from_pretrained(
-            base_model,
-            torch_dtype=torch.float16 if device == 'cuda' else torch.float32,
+        self.pipe = StableDiffusionXLPipeline.from_pretrained(
+            snapshot, torch_dtype=dtype, use_safetensors=True, add_watermarker=False,
         )
-        self.pipe.to(self.device)
 
-        # 加载 LoRA
+        lora_path = Path(lora_path)
         print(f"🎯 加载 LoRA: {lora_path}")
-        self.lora_path = Path(lora_path)
+        if not (lora_path / "adapter_config.json").exists():
+            print("❌ 不是 PEFT 适配器目录（缺 adapter_config.json）")
+            sys.exit(1)
+        cfg = json.load(open(lora_path / "adapter_config.json"))
+        print(f"   r={cfg.get('r')} alpha={cfg.get('lora_alpha')} targets={cfg.get('target_modules')}")
+        side_cfg = lora_path.parent / f"{lora_path.name}_config.json"
+        if side_cfg.exists():
+            print(f"   训练配置: {side_cfg.read_text().strip()}")
 
-        # 加载配置
-        config_path = self.lora_path / "lora_config.json"
-        if config_path.exists():
-            with open(config_path) as f:
-                self.config = json.load(f)
-            print(f"   配置: {json.dumps(self.config, indent=2)}")
-        else:
-            self.config = {}
-
-        # 加载 LoRA 权重
-        self.lora_state_dict = torch.load(
-            self.lora_path / "pytorch_lora_weights.bin",
-            map_location='cpu'
-        )
-
-        # 注入 LoRA 到 UNet
-        self._inject_lora()
-
+        # 把 LoRA 层注入 UNet，然后取回带 LoRA 层的原始 UNet 对象交给管线
+        peft_unet = PeftModel.from_pretrained(self.pipe.unet, str(lora_path))
+        self.pipe.unet = peft_unet.base_model.model
+        self.pipe.unet.to(dtype)
+        self.pipe.to(self.device)
         print("✅ 加载完成")
 
-    def _inject_lora(self):
-        """将 LoRA 权重注入到 UNet"""
-        # 方法 1: 使用 diffusers 的 load_lora_weights
-        try:
-            self.pipe.load_lora_weights(
-                str(self.lora_path.parent),
-                weight_name="pytorch_lora_weights.bin",
-                adapter_name="lora_adapter"
-            )
-            print("   使用 diffusers load_lora_weights 加载成功")
-        except Exception:
-            # 方法 2: 手动注入
-            from diffusers.models.attention_processor import LoRAAttnProcessor
-            from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
-
-            # 遍历 UNet 的 attention 层
-            attn_modules = []
-            for module in self.pipe.unet.modules():
-                module_type = type(module).__name__
-                if any(keyword in module_type for keyword in ['CrossAttn', 'Attn']):
-                    attn_modules.append(module)
-
-            if not attn_modules:
-                print("   ⚠️  未找到注意力模块，尝试其他方法")
-                return
-
-            # 为每个注意力模块添加 LoRA
-            lora_rank = self.config.get('lora_rank', 32)
-            lora_alpha = self.config.get('lora_alpha', 16)
-
-            for module in attn_modules:
-                if hasattr(module, 'lora_up') or hasattr(module, 'to_q_lora'):
-                    continue  # 已经注入了
-
-                lora_proc = LoRAAttnProcessor(
-                    hidden_size=module.to_q.out_features,
-                    cross_attention_dim=module.to_k.in_features,
-                    rank=lora_rank,
-                )
-                module.set_processor(lora_proc)
-
-            # 加载权重
-            self.pipe.unet.load_state_dict(
-                {k.replace('.processor.', '.'): v
-                 for k, v in self.lora_state_dict.items()},
-                strict=False
-            )
-            print("   使用手动注入加载成功")
-
-    def generate(self, prompt, negative_prompt="", lora_weight=0.7,
-                 width=512, height=512, num_steps=30, seed=None):
-        """生成单张图像"""
-
-        # 设置 LoRA 权重
-        scale = lora_weight
-
+    @torch.inference_mode()
+    def generate(self, prompt, negative_prompt="", lora_weight=0.7, width=1024, height=1024,
+                 num_steps=30, guidance=7.0, seed=None):
+        generator = None
         if seed is not None:
             generator = torch.Generator(device=self.device).manual_seed(seed)
-        else:
-            generator = None
-
-        print(f"\n🎨 生成中...")
-        print(f"   Prompt: {prompt[:80]}...")
-        print(f"   LoRA 权重: {scale}")
-        print(f"   步数: {num_steps}")
-
         image = self.pipe(
             prompt=prompt,
-            negative_prompt=negative_prompt,
+            negative_prompt=negative_prompt or None,
             num_inference_steps=num_steps,
-            width=width,
-            height=height,
+            guidance_scale=guidance,
+            width=width, height=height,
             generator=generator,
-            cross_attention_scale=scale,
+            cross_attention_kwargs={"scale": lora_weight},
         ).images[0]
-
         return image
 
-    def generate_batch(self, prompts, output_dir, lora_weight=0.7, **kwargs):
-        """批量生成"""
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
+    def generate_batch(self, prompts, output_dir, negative_prompt="", lora_weight=0.7, seed=None, **kw):
+        out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
+        existing = len(list(out.glob("lora_test_*.png")))
+        manifest = []
         for i, prompt in enumerate(prompts):
-            print(f"\n{'='*60}")
-            print(f"[{i+1}/{len(prompts)}] {prompt}")
+            s = None if seed is None else seed + i
+            print(f"\n[{i+1}/{len(prompts)}] {prompt[:100]}  (lora_weight={lora_weight}, seed={s})")
+            img = self.generate(prompt, negative_prompt=negative_prompt, lora_weight=lora_weight, seed=s, **kw)
+            fn = out / f"lora_test_{existing + i + 1:04d}.png"
+            img.save(str(fn))
+            manifest.append({"file": fn.name, "prompt": prompt, "negative_prompt": negative_prompt,
+                             "lora_weight": lora_weight, "seed": s, **kw})
+            print(f"   💾 {fn}")
+        (out / "manifest.jsonl").open("a").write("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in manifest))
+        print(f"\n🎉 生成完成: {len(prompts)} 张 → {out}")
 
-            image = self.generate(prompt, lora_weight=lora_weight, **kwargs)
-
-            # 保存
-            filename = f"lora_test_{i+1:04d}.png"
-            filepath = output_path / filename
-            image.save(str(filepath))
-            print(f"   💾 已保存: {filepath}")
-
-
-# ============================================================
-# 主程序
-# ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='LoRA 测试生成')
-    parser.add_argument('--lora_path', type=str, required=True,
-                        help='LoRA 模型路径')
-    parser.add_argument('--base_model', type=str,
-                        default='stabilityai/stable-diffusion-xl-base-1.0',
-                        help='基础模型')
-    parser.add_argument('--prompts', type=str,
-                        default='prompts/positive_prompts.txt',
-                        help='提示词文件路径')
-    parser.add_argument('--output', type=str, default='output/videos',
-                        help='输出目录')
-    parser.add_argument('--lora_weight', type=float, default=0.7,
-                        help='LoRA 权重（0.0-1.0）')
-    parser.add_argument('--num_steps', type=int, default=30,
-                        help='采样步数')
-    parser.add_argument('--seed', type=int, default=None,
-                        help='随机种子')
-    parser.add_argument('--device', type=str, default='cuda',
-                        choices=['cuda', 'cpu'],
-                        help='设备')
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description="SDXL LoRA 生图")
+    ap.add_argument("--lora_path", type=str, required=True, help="PEFT 适配器目录，如 output/models/lora/best_lora")
+    ap.add_argument("--base_model", type=str, default="stabilityai/stable-diffusion-xl-base-1.0")
+    ap.add_argument("--prompts", type=str, default="prompts/positive_prompts.txt",
+                    help="提示词文件（每行一条，# 开头忽略）；也可以直接给一段文字")
+    ap.add_argument("--negative_prompts", type=str, default="prompts/negative_prompts.txt",
+                    help="负面提示词文件（所有行用逗号拼成一条）；传 '' 表示不用")
+    ap.add_argument("--output", type=str, default="output/videos")
+    ap.add_argument("--lora_weight", type=float, default=0.7)
+    ap.add_argument("--num_steps", type=int, default=30)
+    ap.add_argument("--guidance", type=float, default=7.0)
+    ap.add_argument("--width", type=int, default=1024)
+    ap.add_argument("--height", type=int, default=1024)
+    ap.add_argument("--seed", type=int, default=None, help="基础种子；第 i 张用 seed+i")
+    ap.add_argument("--device", type=str, default="cuda")
+    args = ap.parse_args()
 
-    # 加载提示词
-    prompt_path = Path(args.prompts)
-    if prompt_path.exists() and prompt_path.is_file():
-        with open(prompt_path) as f:
-            prompts = [line.strip() for line in f
-                       if line.strip() and not line.startswith('#')]
-        print(f"📝 从 {prompt_path} 加载了 {len(prompts)} 个提示词")
+    prompts = load_prompt_file(args.prompts)
+    if prompts is None:
+        prompts = [args.prompts]  # 当作一条内联提示词
+        print("📝 使用内联提示词")
     else:
-        prompts = ["beautiful woman, cinematic lighting, silk dress"]
-        print(f"⚠️  未找到提示词文件，使用默认提示词")
+        print(f"📝 从 {args.prompts} 加载了 {len(prompts)} 条提示词")
+    negative = load_prompt_file(args.negative_prompts, joiner=", ") if args.negative_prompts else ""
+    if negative:
+        print(f"🚫 负面提示词: {negative[:120]}...")
 
-    # 初始化生成器
-    generator = LoRAImageGenerator(args.base_model, args.lora_path, args.device)
-
-    # 批量生成
-    generator.generate_batch(
-        prompts=prompts,
-        output_dir=args.output,
-        lora_weight=args.lora_weight,
-        num_steps=args.num_steps,
-        seed=args.seed,
-    )
-
-    print("\n" + "=" * 60)
-    print("✅ 生成完成！")
-    print(f"   输出目录: {args.output}")
-    print(f"   LoRA 权重建议:")
-    print(f"   - 效果不够明显 → 提高到 0.8-1.0")
-    print(f"   - 过拟合/失真 → 降低到 0.3-0.5")
-    print("=" * 60)
+    gen = LoRAImageGenerator(args.base_model, args.lora_path, args.device)
+    gen.generate_batch(prompts, args.output, negative_prompt=negative or "", lora_weight=args.lora_weight,
+                       seed=args.seed, width=args.width, height=args.height,
+                       num_steps=args.num_steps, guidance=args.guidance)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

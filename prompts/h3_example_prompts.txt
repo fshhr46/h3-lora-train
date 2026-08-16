@@ -1,0 +1,27 @@
+# MiniMax H3 example prompts (T2V / I2V). Formula: subject+scene → ordered actions ("the shot begins… then… the video ends") → camera move → lighting/material → audio → ending.
+# One prompt per paragraph. Sources: fal.ai H3 prompting guide, RunDiffusion H3 guide, ComfyUI H3 tutorial.
+
+## A. 通用 / 商业
+A silver wireless speaker sits on a dark reflective platform. The shot begins with a slow half-orbit; as the camera passes the front, the fabric grille lights up from within. Fine dust drifts through warm side light. Premium tech-commercial look, realistic materials, deep contrast. Audio: quiet room tone, a soft electronic chime when the light comes on. The video ends on the illuminated logo, camera holding still.
+
+Golden-hour street in Lisbon, tram tracks glinting. The shot begins wide on a yellow tram approaching; then cuts closer as it passes, revealing a woman in a red coat crossing behind it. Handheld, slight sway, 35mm look, warm backlight and long shadows. Audio: tram bell, distant chatter, footsteps. The video ends as she turns the corner.
+
+## B. 人物特写 / 时尚（适合你项目的审美方向）
+A young woman with wavy dark hair sits on the edge of a bed in a soft silk robe, morning light through sheer curtains. The shot begins in a medium close-up; she looks down, then slowly lifts her eyes to the camera and gives a small, confident smile. After a brief pause she runs one hand through her hair. Shallow depth of field, 85mm, warm skin tones, film grain. Audio: quiet room, fabric rustle, a distant bird. The video ends on her holding eye contact.
+
+Studio, black backdrop, single warm key light from the left. A woman in a lace bralette and high-waisted satin shorts stands three-quarter to camera. The shot begins on her shoulder and slowly tilts up to her face; she turns her head toward the light and exhales, lips parting slightly. Skin texture visible, subtle rim light, glossy hair. Audio: low ambient hum, a slow synth pad. The video ends on a slow push-in to her eyes.
+
+Beach at sunset, wet sand reflecting the sky. A woman in a white bikini walks slowly toward the camera, water around her ankles. The shot begins wide, then the camera glides backward at her pace, keeping her centered; a light breeze lifts her hair. Anamorphic flares, orange-teal palette, real water physics. Audio: waves, wind, faint gulls. The video ends as she stops and looks past the camera.
+
+## C. UGC / 手机感
+Authentic iPhone selfie-vlog, handheld, natural window light. A woman in an oversized knit sweater holds the phone at arm's length, says "okay, first day in the new apartment" and spins slowly to show the empty room behind her, then laughs. Slight motion blur, TikTok energy, real audio with room echo. The video ends as she puts the phone down on a table, frame tilting.
+
+## D. Image-to-Video（用一张你生成的图当首帧）
+Preserve the woman's face, hair, and outfit from the reference image exactly. The shot begins static; then she slowly turns her head toward the camera and smiles, one hand brushing hair behind her ear. Gentle camera push-in, soft warm lighting consistent with the image, subtle fabric movement. Audio: quiet room, soft breath. The video ends on a hold, no cut.
+
+## 写法要点
+# - 动作要“可见且有序”：the shot begins / then / after a brief pause / the video ends
+# - 明确镜头：push-in, tilt up, half-orbit, glide backward, handheld sway
+# - 给参考图/参考人物指定角色：Preserve the X from the reference image
+# - 音频单独写一句：Audio: …
+# - 说明速度与物理关系：two slow steps, a pause, then a head turn
