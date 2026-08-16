@@ -2,7 +2,7 @@
 """
 genq.py — gen-queue 的命令行客户端（只依赖标准库，任何有 python3 的机器都能用）。
 
-  genq.py image  "prompt 文字" [-m sdxl|chroma] [--base realvis|juggernaut|sdxl] [-n 4] [--steps 36] [--guidance 4.5] [--seed 7] [--w 832 --h 1216] [--neg "..."] [--name batch] [--wait]
+  genq.py image  "prompt 文字" [-m sdxl|chroma] [--base realvis|juggernaut|sdxl|noobai] [--lora 文件名 --lora_weight 0.8] [-n 4] [--steps 36] [--guidance 4.5] [--seed 7] [--w 832 --h 1216] [--neg "..."] [--name batch] [--wait]
   genq.py image  -f ~/shared/prompt.txt  ...            # 从文件读多条 prompt（# 和空行忽略）
   genq.py video  "prompt 文字" [--first 图片] [--last 图片] [--duration 5] [--steps 20] [--seed 42] [--name batch] [--wait]
   genq.py status                                       # 两个队列状态
@@ -46,7 +46,7 @@ def main():
     a = sub.add_parser("image"); a.add_argument("prompt", nargs="?"); a.add_argument("-f", "--file")
     a.add_argument("-m", "--model", default="sdxl", choices=["chroma", "sdxl"]); a.add_argument("--base", help="sdxl 底模: sdxl|realvis|juggernaut|<repo id>（默认 realvis）"); a.add_argument("-n", type=int, default=1)
     a.add_argument("--steps", type=int); a.add_argument("--guidance", type=float); a.add_argument("--seed", type=int)
-    a.add_argument("--w", type=int); a.add_argument("--h", type=int); a.add_argument("--neg"); a.add_argument("--lora_weight", type=float)
+    a.add_argument("--w", type=int); a.add_argument("--h", type=int); a.add_argument("--neg"); a.add_argument("--lora", help="sdxl 单文件 LoRA 名字/路径（在 /mnt/elements/models/loras/sdxl/ 下，多个逗号分隔）或 PEFT 目录"); a.add_argument("--lora_weight", type=float)
     a.add_argument("--name"); a.add_argument("--wait", action="store_true")
     v = sub.add_parser("video"); v.add_argument("prompt"); v.add_argument("--first"); v.add_argument("--last")
     v.add_argument("--duration", type=float, default=5); v.add_argument("--steps", type=int, default=20); v.add_argument("--seed", type=int, default=42)
@@ -64,7 +64,7 @@ def main():
             prompts = [x.strip() for x in Path(os.path.expanduser(args.file)).read_text().splitlines() if x.strip() and not x.lstrip().startswith("#")]
         elif not args.prompt: sys.exit("需要 prompt 或 -f 文件")
         body = {k: v for k, v in dict(model=args.model, base_model=args.base, prompt=None if prompts else args.prompt, prompts=prompts, n=args.n, steps=args.steps,
-                guidance=args.guidance, seed=args.seed, width=args.w, height=args.h, negative=args.neg, lora_weight=args.lora_weight, name=args.name).items() if v is not None}
+                guidance=args.guidance, seed=args.seed, width=args.w, height=args.h, negative=args.neg, lora_path=args.lora, lora_weight=args.lora_weight, name=args.name).items() if v is not None}
         j = call("POST", "/jobs/image", body); show(j)
         if args.wait: wait(j["id"])
     elif args.cmd == "video":

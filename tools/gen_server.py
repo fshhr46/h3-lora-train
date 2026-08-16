@@ -205,7 +205,7 @@ def worker(queue, fn):
 # ---------------- API ----------------
 class ImageJob(BaseModel):
     model: str = Field("sdxl", pattern="^(chroma|sdxl)$")
-    base_model: Optional[str] = None   # sdxl 模式的底模：sdxl|realvis|juggernaut 或 HF repo id（默认 realvis）
+    base_model: Optional[str] = None   # sdxl 模式的底模：sdxl|realvis|juggernaut|noobai 或 HF repo id（默认 realvis）
     prompt: Optional[str] = None
     prompts: Optional[List[str]] = None
     n: int = 1

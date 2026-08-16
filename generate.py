@@ -35,7 +35,9 @@ BASE_ALIASES = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0", "sdxl-base": "stabilityai/stable-diffusion-xl-base-1.0",
     "realvis": "SG161222/RealVisXL_V5.0", "realvisxl": "SG161222/RealVisXL_V5.0",
     "juggernaut": "RunDiffusion/Juggernaut-XL-v9", "juggernautxl": "RunDiffusion/Juggernaut-XL-v9",
+    "noobai": "Laxhar/noobai-XL-1.1", "noobai-xl": "Laxhar/noobai-XL-1.1",
 }
+LORA_DIR = os.environ.get("LORA_DIR", "/mnt/elements/models/loras/sdxl")   # 单文件 LoRA（Civitai/kohya 格式）存放处
 
 
 def resolve_base_model(base_model: str):
@@ -84,6 +86,19 @@ class LoRAImageGenerator:
 
         if not lora_path or str(lora_path).lower() in ("none", "off", "-"):
             print("🎯 不加载 LoRA（纯底模）")
+            self.pipe.to(self.device); print("✅ 加载完成"); return
+        # 单文件 LoRA（Civitai / kohya / diffusers 格式 .safetensors）：名字或路径；可用逗号给多个
+        if str(lora_path).endswith(".safetensors") or "," in str(lora_path) or not Path(lora_path).is_dir():
+            names = []
+            for i, item in enumerate(str(lora_path).split(",")):
+                item = item.strip()
+                f = item if os.path.isfile(item) else os.path.join(LORA_DIR, item if item.endswith(".safetensors") else item + ".safetensors")
+                if not os.path.isfile(f):
+                    print(f"❌ 找不到 LoRA 文件: {item}（也不在 {LORA_DIR}）"); sys.exit(1)
+                name = f"lora{i}"; names.append(name)
+                print(f"🎯 加载单文件 LoRA: {f} → adapter '{name}'")
+                self.pipe.load_lora_weights(os.path.dirname(os.path.abspath(f)), weight_name=os.path.basename(f), adapter_name=name)
+            self.pipe.set_adapters(names, adapter_weights=[1.0] * len(names))
             self.pipe.to(self.device); print("✅ 加载完成"); return
         lora_path = Path(lora_path)
         print(f"🎯 加载 LoRA: {lora_path}")
@@ -139,7 +154,7 @@ class LoRAImageGenerator:
 
 def main():
     ap = argparse.ArgumentParser(description="SDXL LoRA 生图")
-    ap.add_argument("--lora_path", type=str, default="none", help="PEFT 适配器目录，如 output/models/lora/best_lora；none = 不加载")
+    ap.add_argument("--lora_path", type=str, default="none", help="PEFT 适配器目录（train_lora.py 产出），或单文件 LoRA（Civitai/kohya .safetensors，名字会去 $LORA_DIR 找，多个用逗号），none = 不加载")
     ap.add_argument("--base_model", type=str, default=os.environ.get("SDXL_BASE", "realvis"), help="别名 sdxl|realvis|juggernaut 或 HF repo id / 本地目录（默认 realvis，可用环境变量 SDXL_BASE 改）")
     ap.add_argument("--prompts", type=str, default="prompts/positive_prompts.txt",
                     help="提示词文件（每行一条，# 开头忽略）；也可以直接给一段文字")
