@@ -20,6 +20,16 @@ except ImportError as e:
 MODEL_ID = os.environ.get("CHROMA_MODEL", "lodestones/Chroma1-HD")
 
 
+def resolve_model(model_id: str) -> str:
+    """离线：优先用 HF 缓存里的 snapshot 目录（diffusers 离线按 repo id 加载会去联网查元数据）。"""
+    if os.path.isdir(model_id):
+        return model_id
+    import glob
+    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    snaps = sorted(glob.glob(os.path.join(hf_home, "hub", "models--" + model_id.replace("/", "--"), "snapshots", "*")))
+    return snaps[-1] if snaps else model_id
+
+
 def load_prompt_file(path, joiner=None):
     p = Path(path)
     if not p.is_file():
@@ -56,7 +66,8 @@ def main():
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🖥️  设备: {dev} (CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','all')}) | 📦 {MODEL_ID}")
     t0 = time.time()
-    pipe = ChromaPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
+    MODEL_PATH = resolve_model(MODEL_ID); print(f"   路径: {MODEL_PATH}")
+    pipe = ChromaPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
     if args.fp8:
         pipe.transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=torch.bfloat16)
     if args.no_offload:
