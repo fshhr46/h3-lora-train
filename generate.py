@@ -31,18 +31,33 @@ except ImportError as e:
     sys.exit(1)
 
 
-def resolve_base_model(base_model: str) -> str:
-    """把 HF repo id 解析成项目 .models/ 缓存里的 snapshot 目录（离线）。已是本地目录则原样返回。"""
+BASE_ALIASES = {
+    "sdxl": "stabilityai/stable-diffusion-xl-base-1.0", "sdxl-base": "stabilityai/stable-diffusion-xl-base-1.0",
+    "realvis": "SG161222/RealVisXL_V5.0", "realvisxl": "SG161222/RealVisXL_V5.0",
+    "juggernaut": "RunDiffusion/Juggernaut-XL-v9", "juggernautxl": "RunDiffusion/Juggernaut-XL-v9",
+}
+
+
+def resolve_base_model(base_model: str):
+    """别名/HF repo id → 本地 snapshot 目录（离线）。返回 (path, variant)。variant='fp16' 表示只下了 fp16 权重。"""
+    base_model = BASE_ALIASES.get(base_model.lower(), base_model)
     if os.path.isdir(base_model) and os.path.exists(os.path.join(base_model, "model_index.json")):
-        return base_model
-    here = Path(__file__).resolve().parent
-    repo_dir = "models--" + base_model.replace("/", "--")
-    for cache in (here / ".models", Path.home() / ".cache" / "huggingface" / "hub"):
-        snaps = sorted(glob.glob(str(cache / repo_dir / "snapshots" / "*")))
-        if snaps:
-            return snaps[-1]
-    print(f"❌ 在 .models/ 或 ~/.cache/huggingface/hub 里找不到 {base_model} 的缓存")
-    sys.exit(1)
+        snap = base_model
+    else:
+        here = Path(__file__).resolve().parent
+        repo_dir = "models--" + base_model.replace("/", "--")
+        hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+        snap = None
+        for cache in (here / ".models", hf_home / "hub", Path.home() / ".cache" / "huggingface" / "hub"):
+            snaps = sorted(glob.glob(str(cache / repo_dir / "snapshots" / "*")))
+            if snaps:
+                snap = snaps[-1]; break
+        if not snap:
+            print(f"❌ 找不到 {base_model} 的本地缓存（.models/、$HF_HOME/hub、~/.cache/huggingface/hub）"); sys.exit(1)
+    unet = os.path.join(snap, "unet")
+    variant = "fp16" if (os.path.exists(os.path.join(unet, "diffusion_pytorch_model.fp16.safetensors"))
+                         and not os.path.exists(os.path.join(unet, "diffusion_pytorch_model.safetensors"))) else None
+    return snap, variant
 
 
 def load_prompt_file(path, joiner=None):
@@ -59,14 +74,17 @@ class LoRAImageGenerator:
     def __init__(self, base_model, lora_path, device="cuda"):
         self.device = torch.device(device)
         dtype = torch.float16 if self.device.type == "cuda" else torch.float32
-        snapshot = resolve_base_model(base_model)
+        snapshot, variant = resolve_base_model(base_model)
         print(f"🖥️  设备: {self.device}")
-        print(f"📦 基础模型: {snapshot}")
+        print(f"📦 基础模型: {base_model} → {snapshot}" + (f" (variant={variant})" if variant else ""))
 
-        self.pipe = StableDiffusionXLPipeline.from_pretrained(
-            snapshot, torch_dtype=dtype, use_safetensors=True, add_watermarker=False,
-        )
+        kw = dict(torch_dtype=dtype, use_safetensors=True, add_watermarker=False)
+        if variant: kw["variant"] = variant
+        self.pipe = StableDiffusionXLPipeline.from_pretrained(snapshot, **kw)
 
+        if not lora_path or str(lora_path).lower() in ("none", "off", "-"):
+            print("🎯 不加载 LoRA（纯底模）")
+            self.pipe.to(self.device); print("✅ 加载完成"); return
         lora_path = Path(lora_path)
         print(f"🎯 加载 LoRA: {lora_path}")
         if not (lora_path / "adapter_config.json").exists():
@@ -121,8 +139,8 @@ class LoRAImageGenerator:
 
 def main():
     ap = argparse.ArgumentParser(description="SDXL LoRA 生图")
-    ap.add_argument("--lora_path", type=str, required=True, help="PEFT 适配器目录，如 output/models/lora/best_lora")
-    ap.add_argument("--base_model", type=str, default="stabilityai/stable-diffusion-xl-base-1.0")
+    ap.add_argument("--lora_path", type=str, default="none", help="PEFT 适配器目录，如 output/models/lora/best_lora；none = 不加载")
+    ap.add_argument("--base_model", type=str, default=os.environ.get("SDXL_BASE", "realvis"), help="别名 sdxl|realvis|juggernaut 或 HF repo id / 本地目录（默认 realvis，可用环境变量 SDXL_BASE 改）")
     ap.add_argument("--prompts", type=str, default="prompts/positive_prompts.txt",
                     help="提示词文件（每行一条，# 开头忽略）；也可以直接给一段文字")
     ap.add_argument("--negative_prompts", type=str, default="prompts/negative_prompts.txt",

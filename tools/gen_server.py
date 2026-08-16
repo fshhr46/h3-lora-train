@@ -10,7 +10,7 @@ gen_server.py — 图片 / 视频生成的 FIFO 队列服务（FastAPI）。
 
 启动：tools/gen_server.sh start   （systemd 用户单元 gen-api，监听 0.0.0.0:8090，tailnet 内可访问）
 API：
-  POST /jobs/image   {"model":"chroma"|"sdxl", "prompts":[...] 或 "prompt":"...", "n":1, "steps":..,
+  POST /jobs/image   {"model":"sdxl"|"chroma" (默认 sdxl), "base_model":"realvis|juggernaut|sdxl|<repo>", "prompts":[...] 或 "prompt":"...", "n":1, "steps":..,
                       "guidance":.., "seed":42, "width":1024, "height":1024, "negative":"...", "lora_weight":0.0, "name":"batch"}
   POST /jobs/video   {"prompt":"...", "first":"<路径或smb地址>", "last":"...", "duration":5, "steps":20,
                       "seed":42, "width":null, "height":null, "aspect":"16:9", "name":"batch"}
@@ -136,7 +136,7 @@ def run_cmd(queue, jid, cmd, env, logfile):
 
 # ---------------- executors ----------------
 def exec_image(job):
-    r = job["request"]; model = r.get("model", "chroma")
+    r = job["request"]; model = r.get("model", "sdxl")
     ts = time.strftime("%Y%m%d-%H%M"); name = r.get("name") or job["id"]
     sub = "chroma-images" if model == "chroma" else "lora-images"
     out = HOME / "shared" / sub / f"{ts}-{name}"; out.mkdir(parents=True, exist_ok=True)
@@ -153,7 +153,7 @@ def exec_image(job):
         if r.get("negative"): cmd += ["--negative_prompts", r["negative"]]
         if r.get("fp8"): cmd += ["--fp8"]
     else:  # sdxl
-        cmd = [VENV_PY, ROOT / "generate.py", "--lora_path", r.get("lora_path") or "output/models/lora/best_lora",
+        cmd = [VENV_PY, ROOT / "generate.py", "--base_model", r.get("base_model") or "realvis", "--lora_path", r.get("lora_path") or "none",
                "--prompts", pf, "--output", out, "--lora_weight", r.get("lora_weight") if r.get("lora_weight") is not None else 0.0,
                "--num_steps", r.get("steps") or 30, "--guidance", r.get("guidance") or 7.0,
                "--width", r.get("width") or 1024, "--height", r.get("height") or 1024, "--seed", r.get("seed") if r.get("seed") is not None else 42]
@@ -204,7 +204,8 @@ def worker(queue, fn):
 
 # ---------------- API ----------------
 class ImageJob(BaseModel):
-    model: str = Field("chroma", pattern="^(chroma|sdxl)$")
+    model: str = Field("sdxl", pattern="^(chroma|sdxl)$")
+    base_model: Optional[str] = None   # sdxl 模式的底模：sdxl|realvis|juggernaut 或 HF repo id（默认 realvis）
     prompt: Optional[str] = None
     prompts: Optional[List[str]] = None
     n: int = 1

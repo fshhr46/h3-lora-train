@@ -4,7 +4,7 @@
 > SDXL LoRA 训练并把环境恢复原状。所有命令默认从 **bastion**（Mac mini）或 **runtime** 上通过
 > `ssh furnance` 执行；runtime 已配置免密直连 furnance。
 > 最后更新：2026-08-16（训练 §1 与生图 §3 均已实跑验证）。
-> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img sdxl|chroma] …` → §3（图片，默认 chroma）；用户发 `[gen-v] …` → §5（视频）；“gen-mode / brain mode”→ §0.5；提交任务优先用 §6 的队列；都不需要再向用户要说明。
+> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img sdxl|chroma] …` → §3（图片，默认 sdxl / RealVisXL）；用户发 `[gen-v] …` → §5（视频）；“gen-mode / brain mode”→ §0.5；提交任务优先用 §6 的队列；都不需要再向用户要说明。
 
 ---
 
@@ -123,7 +123,9 @@ trap 仍会恢复 brain。之后同样做 1.4 的 brain 检查。
 
 ### 3.1 约定
 
-- 用户会以 **`[gen-img]`** 开头发提示词（旧写法 `[prompt]` 同义）。**模式后缀**：`[gen-img sdxl] …` 走 SDXL（标签式关键词、77 token 上限、LoRA 生态），`[gen-img chroma] …` 走 Chroma1-HD（自然语言长句、真 CFG，默认 36 步 / CFG 4.5）；**不写模式默认 chroma**（2026-08-16 用户定）。两者都通过队列提交：`tools/genq.py image "..." -m sdxl|chroma`（可能是完整句子，也可能是按类别列的词条）。收到后**不用再问**，直接执行；一行一条 prompt。词条式的输入自己组合成若干条完整 prompt（每条以 `beautiful woman, ...` 开头、以 `photorealistic` 结尾即可）。
+- 用户会以 **`[gen-img]`** 开头发提示词（旧写法 `[prompt]` 同义）。**模式后缀**：`[gen-img sdxl] …` 走 SDXL（标签式关键词、77 token 上限、LoRA 生态），`[gen-img chroma] …` 走 Chroma1-HD（自然语言长句、真 CFG，默认 36 步 / CFG 4.5）；**不写模式默认 sdxl**（2026-08-16 用户改回）。两者都通过队列提交：`tools/genq.py image "..." -m sdxl|chroma`。
+- **SDXL 底模可切换**（`--base` / `base_model` / `BASE_MODEL=`）：`realvis` = RealVisXL V5.0（**默认**，写实照片感）、`juggernaut` = Juggernaut XL v9（电影/杂志感）、`sdxl` = 原版 SDXL base；也可给任意 HF repo id 或本地目录。权重在 `/mnt/elements/hf-cache`（fp16 变体，`generate.py` 自动识别）。默认不加载 LoRA（`--lora_path none`；v1 LoRA 会出噪点）。
+- Chroma 尺度/成人向表现不如 SDXL 微调生态（通用模型、T5 自然语言）；成人向走 SDXL 微调 + LoRA，Chroma/Kontext 做写实、自然语言、人物一致性。（可能是完整句子，也可能是按类别列的词条）。收到后**不用再问**，直接执行；一行一条 prompt。词条式的输入自己组合成若干条完整 prompt（每条以 `beautiful woman, ...` 开头、以 `photorealistic` 结尾即可）。
 - 默认参数：`--lora_path output/models/lora/best_lora --lora_weight 0.7 --num_steps 30 --seed 42`，1024×1024，guidance 7.0，负面词默认取 `prompts/negative_prompts.txt` 全部拼接。用户在同一条消息里说了强度/步数/尺寸/张数就按用户的。
 - **输出必须放到 SMB 共享**下：`~/shared/lora-images/<YYYYMMDD-HHMM>-<批次名>/`（furnance 的 `/home/fshhr46/shared` 通过 Samba `[shared]` 公开、guest 可读写）。用户在任意 tailnet 设备上用 `smb://guest@100.89.241.44/shared` 看图。把本次 prompt 文件也复制一份到该目录（`prompts.txt`），脚本会自动写 `manifest.jsonl`（每张图的 prompt / seed / 参数）和 `generation_log.txt`。
 - 显卡：gen-mode 下图片固定 **gpu2（索引 1）**，`run_gen.sh` / `run_chroma.sh` 默认就是；SDXL 1024²、30 步约 5–8 秒/张。brain mode 下不能出图，先切 gen-mode。视频在 gpu1 上跑时图片照常可跑。
@@ -233,7 +235,7 @@ tools/genq.py status | list [-q image|video] [-s pending|running|done|failed] | 
 |---|---|---|
 | 主脑 | furnance | `systemctl --user {status,start,stop,restart} llama-brain.service`；`journalctl --user -u llama-brain -n 50` |
 | 训练 | furnance | `systemctl --user status lora-train.service`；`journalctl --user -u lora-train -f` |
-| 生图 (SDXL) | furnance | `tools/run_gen.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/lora-images/<批次>/`；SMB `smb://guest@100.89.241.44/shared` |
+| 生图 (SDXL) | furnance | `tools/run_gen.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`，`BASE_MODEL=realvis|juggernaut|sdxl`）；产出 `~/shared/lora-images/<批次>/`；SMB `smb://guest@100.89.241.44/shared` |
 | 队列服务 gen-queue | furnance | `tools/gen_server.sh {start,stop,status,logs}`（:8090，`/docs`）；`tools/genq.py image|video|status|list|get|wait|cancel` |
 | 生视频 (H3, ComfyUI 后端) | furnance | `tools/h3_server.sh {start,stop,status,logs}`（gpu1=索引0，:8188）；`tools/run_h3.sh --first … --last … --prompt …`；产出 `~/shared/h3-videos/<批次>/`；日志 `/mnt/elements/logs/h3-comfy.log` |
 | 生图 (Chroma) | furnance | `tools/run_chroma.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/chroma-images/<批次>/` |
