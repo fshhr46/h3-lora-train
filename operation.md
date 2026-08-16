@@ -4,7 +4,7 @@
 > SDXL LoRA 训练并把环境恢复原状。所有命令默认从 **bastion**（Mac mini）或 **runtime** 上通过
 > `ssh furnance` 执行；runtime 已配置免密直连 furnance。
 > 最后更新：2026-08-16（训练 §1 与生图 §3 均已实跑验证）。
-> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img] …` → §3（图片）；用户发 `[gen-v] …` → §5（视频）；都不需要再向用户要说明。
+> 用户说“训练”“跑 LoRA”→ §1；用户发 `[gen-img] …` → §3（图片）；用户发 `[gen-v] …` → §5（视频）；“gen-mode / brain mode”→ §0.5；都不需要再向用户要说明。
 
 ---
 
@@ -20,6 +20,19 @@
 
 **核心约束**：furnance 的 GPU 被 brain 占着，任何离线 GPU 任务（LoRA 训练、生图、bake 视频）都必须
 **先停 brain、做完再启 brain**。停 brain 期间 dsh 的 `furnance` provider 不可用，用 `runtime`。
+
+---
+
+## 0.5 两种运行模式（用户定义的术语）
+
+| 模式 | brain（llama-brain.service） | gpu1 = nvidia-smi 索引 0 | gpu2 = nvidia-smi 索引 1 | 什么时候用 |
+|---|---|---|---|---|
+| **brain mode** | 运行，占满两张卡（各 ~22.5 GB） | brain | brain | dsh 用 furnance 主脑对话时 |
+| **gen-mode** | 停止 | **视频**：MiniMax H3（ComfyUI 后端 :8188） | **图片**：SDXL / Chroma / LoRA 训练 | 出图、出视频、训练时 |
+
+- 切换：`systemctl --user stop llama-brain.service`（进 gen-mode）/ `systemctl --user start llama-brain.service`（回 brain mode，加载 ~7 分钟）。gen-mode 期间 dsh 用 `runtime` provider。用户已明确“停 brain 不是问题”。
+- 脚本默认已按 gen-mode 绑定：`tools/h3_server.sh` → `H3_GPU=0`；`tools/run_gen.sh` / `tools/run_chroma.sh` / `tools/run_lora_train.sh` → `GPU=1`。图片和视频可以**同时跑**（各占一张卡），只共享内存。
+- 用户说“gpu1/gpu2”指的是这个 1 起数的编号；命令行里的 `CUDA_VISIBLE_DEVICES` 是 0 起数，别弄混。
 
 ---
 
@@ -113,8 +126,9 @@ trap 仍会恢复 brain。之后同样做 1.4 的 brain 检查。
 - 用户会以 **`[gen-img]`** 开头发提示词（旧写法 `[prompt]` 同义）（可能是完整句子，也可能是按类别列的词条）。收到后**不用再问**，直接执行；一行一条 prompt。词条式的输入自己组合成若干条完整 prompt（每条以 `beautiful woman, ...` 开头、以 `photorealistic` 结尾即可）。
 - 默认参数：`--lora_path output/models/lora/best_lora --lora_weight 0.7 --num_steps 30 --seed 42`，1024×1024，guidance 7.0，负面词默认取 `prompts/negative_prompts.txt` 全部拼接。用户在同一条消息里说了强度/步数/尺寸/张数就按用户的。
 - **输出必须放到 SMB 共享**下：`~/shared/lora-images/<YYYYMMDD-HHMM>-<批次名>/`（furnance 的 `/home/fshhr46/shared` 通过 Samba `[shared]` 公开、guest 可读写）。用户在任意 tailnet 设备上用 `smb://guest@100.89.241.44/shared` 看图。把本次 prompt 文件也复制一份到该目录（`prompts.txt`），脚本会自动写 `manifest.jsonl`（每张图的 prompt / seed / 参数）和 `generation_log.txt`。
-- 显卡：生图很快（1024²、30 步在 4090 上约 5–8 秒/张）。**若 brain 正在跑**：停 brain → 生图 → 启 brain。**若 brain 已因训练/别的生图停着**：不要碰 brain，直接用空闲的那张卡（训练默认占 GPU 0，就用 `CUDA_VISIBLE_DEVICES=1`），也不要在自己的单元里 start brain——由先前那个停 brain 的单元负责恢复。
+- 显卡：gen-mode 下图片固定 **gpu2（索引 1）**，`run_gen.sh` / `run_chroma.sh` 默认就是；SDXL 1024²、30 步约 5–8 秒/张。brain mode 下不能出图，先切 gen-mode。视频在 gpu1 上跑时图片照常可跑。
 - `generate.py` 已在 2026-08-16 重写为 SDXL + PEFT 版本（原文件在 `generate.py.orig`）：从 `.models/` 离线加载 `StableDiffusionXLPipeline`，用 `PeftModel.from_pretrained` 把 `best_lora/`（`adapter_config.json`+`adapter_model.safetensors`）注入 UNet，`--lora_weight` 走 `cross_attention_kwargs`。参数：`--lora_path --prompts --negative_prompts --output --lora_weight --num_steps --guidance --width --height --seed --device`。`--prompts` 既可以是文件也可以直接是一段文字。
+- **Chroma1-HD**（FLUX 架构、Apache 2.0、未过滤社区模型，2026-08-16 加入）：`tools/run_chroma.sh <批次名>` 读同一个 `~/shared/prompt.txt`，出到 `~/shared/chroma-images/<时间>-<批次>/`；变量 `N/STEPS(26)/GUIDANCE(3.5)/SEED/W/H/GPU(1)/NEG/FP8`。底层 `tools/generate_chroma.py`（diffusers `ChromaPipeline`，权重 `lodestones/Chroma1-HD` 在 `HF_HOME=/mnt/elements/hf-cache`，24 GB 卡靠 `enable_model_cpu_offload`，每张 1024² 约 30–60 秒）。用户发 `[gen-img]` 未指定模型时默认仍是 SDXL；说“用 chroma”就走它。
 - 用户自助出图：编辑 SMB 根目录的 `~/shared/prompt.txt`（一行一条），然后 `tools/run_gen.sh <批次名>`；`N=4` 每条出 4 张、`LORA_WEIGHT=0.3`、`STEPS/SEED/W/H/GPU/PROMPTS` 均可用环境变量覆盖。用户说“跑 prompt.txt”就是这个。
 - LoRA 现状（2026-08-16）：v1 适配器一套上就出噪点（训练侧不一致导致），`train_lora.py` 已重写为 v2 但**用户决定暂不重训**；因此默认 `LORA_WEIGHT=0.0`（= 纯 SDXL 出图）。
 - runtime 上 `prompts/generation_instructions.txt` 是 dsh agent 写的早期版本，里面 `~/.models` 路径写错了（实际是项目下 `.models/`），以本节为准。
@@ -153,46 +167,45 @@ ssh furnance 'ls ~/shared/lora-images/<目录>/ ; systemctl --user is-active lla
 
 ---
 
-## 5. MiniMax H3 生视频（vLLM-Omni，单卡，无 ComfyUI）
+## 5. MiniMax H3 生视频（方案 B：无界面 ComfyUI 后端，gpu1）
 
 ### 5.1 约定
-- 用户以 **`[gen-v]`** 开头请求视频。参数写法：`first=<图片路径或smb地址> last=<图片路径或smb地址> prompt=…`；只给 first = 单图生视频，不给图 = 纯文生视频。可附 `duration=8 steps=50 seed=7 name=批次名`。
-- 用户通常**自己跑**（他明确说过）；Claude 的职责是让服务可用、脚本正确、文档最新。若用户让 Claude 跑，直接执行，不再追问。
+- 用户以 **`[gen-v]`** 开头请求视频。参数：`first=<图片路径或smb地址> last=<图片路径或smb地址> prompt=…`；只给 first = 单图生视频，不给图 = 纯文生视频。可附 `duration=5 steps=20 seed=7 name=批次名`。
+- 用户通常**自己跑**；Claude 的职责是让后端可用、脚本正确、文档最新。若用户让 Claude 跑，直接执行。
 - 图片路径接受 SMB 地址（`smb://100.89.241.44/shared/...`、`/Volumes/shared/...`），脚本自动换算到 `~/shared/...`。
 - 输出固定：`~/shared/h3-videos/<时间>-<批次名>/video.mp4`（+ `request.json`、首/尾帧副本），即 `smb://guest@100.89.241.44/shared/h3-videos/`。
-- 内容边界同 §3.4：明确裸露/性内容的首尾帧或 prompt，Claude 不代为执行，用户自己跑同一条命令。
+- 内容边界同 §3.4。
 
-### 5.2 架构与限制（决策记录）
-- 用户明确**不用 ComfyUI**，走 vLLM-Omni 单卡方案：官方 bf16 权重（`MiniMaxAI/MiniMax-H3` 的 FL2VA 分区，~134 GB，不 gated）+ 加载时 FP8 量化 + CPU offload。权重缓存 `HF_HOME=/mnt/elements/hf-cache`（外接盘）。
-- **GPU 分工**：H3 固定 GPU 1（`CUDA_VISIBLE_DEVICES=1`），GPU 0 留给 SDXL 出图。跑 H3 期间 **llama-brain 必须停**（它占满两张卡）；用户已认可“停 brain 不是问题”。将来 brain 单卡化（Q4_K_M 全 GPU，或 Q6 + 部分专家 offload）后可与 H3 共存。
-- 单张 4090 跑 33B 的现实：fp8 + offload → 每条视频分钟级；建议 768p 短边、5–8 秒；2K/15 秒不现实；H3 LoRA 训练在这台机上不可行。
-- 内存：fp8 权重常驻约 70 GB / 125 GB。别同时再起别的大内存任务。
-- ComfyUI 格式的 int8 权重包也下了一份在 `/mnt/elements/models/minimax-h3/`（42.5 GB，备用，vLLM-Omni 用不了）。
+### 5.2 架构与决策记录
+- **方案 A（vLLM-Omni）已放弃**（2026-08-16，六次尝试）：单卡放不下 32B 文本编码器；在线 fp8 量化要整模先上 GPU（24 GB 必 OOM）；bf16 + 双卡 DLO 需要 ≥200 GB 内存（furnance 125 GB，被 OOM-killer 杀）。代码保留在 `~/vllm-omni`（.venv 已装好 vLLM 0.27.1），脚本改名 `tools/run_h3_vllm.sh` / `tools/h3_server_vllm.sh`，日志 `/mnt/elements/logs/h3-server.log.try1..6`。**加内存到 256 GB 后**可复用双卡 DLO 配方。furnance 上多了 `/swapfile.h3`（64 GB，无害，留着）。
+- **方案 B（现役）**：ComfyUI 0.30.0（`~/ComfyUI`，conda 环境 `comfy`，内置 H3 节点）当**无界面后端**，只监听 `127.0.0.1:8188`；权重用 Comfy-Org 官方量化包（DiT int8 剪枝 21 GB + Qwen3-VL 编码器 nvfp4 15.7 GB + 视频/音频 VAE），在 `/mnt/elements/models/minimax-h3/`，已软链进 `~/ComfyUI/models/{diffusion_models,text_encoders,vae}`。用户不想“用 ComfyUI”指的是界面；这里只是后台进程，用户操作仍是脚本。
+- GPU：**gpu1（索引 0）**；显存峰值约 17–20 GB；内存 ~25 GB；nvfp4 在 Ada 上是软件模拟（编码慢一点，无碍）。
+- 生成图 = 官方模板 `video_minimax_h3_{t2v,i2v}.json` 的子图手工展开（`tools/h3_comfy.py` 里 `build_graph`）：UNETLoader / CLIPLoader(type=minimax) / VAELoader×2 → MiniMaxH3ImageToVideo(clip, vae, prompt, width, height, length, first_frame?, last_frame?) → BasicGuider → SamplerCustomAdvanced(res_multistep, simple, 20 步) → VAEDecode + VAEDecodeAudio → CreateVideo(24fps) → SaveVideo。首/尾帧先 ImageScale 到画布尺寸。画布：768 短边、上限 768×1344、32 倍数，按首帧比例；帧数 = max(5, round(秒×24)) 向上贴到 17k+5。模板 JSON 存在 `tools/h3-workflows/`。
 
 ### 5.3 服务：`tools/h3_server.sh {start|stop|status|logs}`
 ```bash
-ssh furnance 'systemctl --user is-active llama-brain.service'      # 必须是 inactive；否则先 stop
-ssh furnance '~/workspace/test-deepseek-harness/tools/h3_server.sh start'   # 首次加载 10–20 分钟
-ssh furnance '~/workspace/test-deepseek-harness/tools/h3_server.sh status'  # health=200 才算就绪
+ssh furnance 'systemctl --user is-active llama-brain.service'   # 必须 inactive（gen-mode）
+ssh furnance '~/workspace/test-deepseek-harness/tools/h3_server.sh start'   # 秒起；首个请求加载权重 ~40 GB（外接盘，3–5 分钟）
+ssh furnance '~/workspace/test-deepseek-harness/tools/h3_server.sh status'  # api=200 即可用；显示队列与显存
 ```
-底层：`systemd-run --user --unit=h3-server … vllm serve MiniMaxAI/MiniMax-H3 --omni --trust-remote-code --num-gpus 1 --enable-cpu-offload --quantization fp8 --task-type fl2va --enforce-eager --diffusion-attention-backend FLASH_ATTN --vae-use-tiling --port 8091`。日志 `/mnt/elements/logs/h3-server.log`。若 FLASH_ATTN 后端报错，改 `CUDNN_ATTN`。
+日志 `/mnt/elements/logs/h3-comfy.log`。后端常驻不用停；模型加载一次后留在显存/内存里。
 
-### 5.4 生成：`tools/run_h3.sh`
+### 5.4 生成：`tools/run_h3.sh`（= `tools/h3_comfy.py`，用 comfy 环境的 python）
 ```bash
 # 首帧 + 尾帧 + prompt
 ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --first smb://100.89.241.44/shared/lora-images/X/a.png --last smb://100.89.241.44/shared/lora-images/X/b.png --prompt "The subject moves naturally from the first image to the last, gentle camera push-in" --duration 5 --name test1'
-# 单图
+# 单图 / 纯文生视频
 ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --first ~/shared/lora-images/X/a.png --prompt "..." --duration 5'
-# 纯文生视频
 ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --prompt "..." --aspect 16:9 --duration 5'
 ```
-可选：`--steps 50 --seed 42 --width W --height H --prompt-file 文件 --dry-run（只打印 curl）`。API 细节：`POST /v1/videos/sync`，多图用 `input_references`，`extra_params={"task":"fl2va","duration":…,"frame_indices":[0,-1],"audio_flow_shift":3.0,"flow_shift":12}`；不给宽高时按首帧比例、768 短边。
+可选：`--steps 20 --seed 42 --width W --height H --prompt-file 文件 --dry-run（打印 API 图不提交）`。脚本会上传图片到 ComfyUI、提交 `/prompt`、轮询 `/history`、把 mp4 从 `/view` 取回到输出目录。
 
 ### 5.5 H3 的 prompt 写法
-分镜叙述式（与 SDXL 的关键词式不同）：主体+场景 → 有序动作（the shot begins… then… the video ends）→ 镜头运动 → 光线质感 → `Audio: …` → 结尾。示例见 `prompts/h3_example_prompts.txt`。用图片做首帧时，prompt 里写 “Preserve the subject from the reference image exactly” 一类的话。
+分镜叙述式：主体+场景 → 有序动作（the shot begins… then… the video ends）→ 镜头运动 → 光线质感 → `Audio: …` → 结尾。示例 `prompts/h3_example_prompts.txt`。用图做首帧时写 “Preserve the subject from the reference image exactly”。
 
-### 5.6 状态（2026-08-16 04:40）
-- 权重下载与 vLLM-Omni 安装曾在后台进行（单元 `h3-official-download`、`vllm-omni-install`）；**服务尚未首次启动验证**。首次 `h3_server.sh start` 后要盯 `logs`，常见问题：flash-attn 未编译（换 CUDNN_ATTN）、内存不足（关掉其它任务）、`--task-type` 参数名变化（看 `vllm serve --help`）。跑通后把实测的加载时间/每条耗时/显存写回这一节。
+### 5.6 实测记录
+- 2026-08-16 首条 5 秒 I2V（首帧 1024² SDXL 图 → 画布 768×768，124 帧，20 步，seed 42）：**总耗时 740 s**，其中首次加载权重（外接盘 40 GB）约 4–5 分钟，纯生成约 7–8 分钟；输出 H.264 + AAC 立体声，5.17 s；GPU 峰值 ~17 GB，内存 ~25 GB。文件 `~/shared/h3-videos/20260816-094733-smoke-i2v/`。
+- 预期节奏：后端常驻、模型已加载时，一条 5 秒 768p 约 6–8 分钟；一次只跑一条（H3 单批一请求）。
 
 ---
 
@@ -202,8 +215,9 @@ ssh furnance '~/workspace/test-deepseek-harness/tools/run_h3.sh --prompt "..." -
 |---|---|---|
 | 主脑 | furnance | `systemctl --user {status,start,stop,restart} llama-brain.service`；`journalctl --user -u llama-brain -n 50` |
 | 训练 | furnance | `systemctl --user status lora-train.service`；`journalctl --user -u lora-train -f` |
-| 生图 | furnance | `tools/run_gen.sh <批次名>`（读 `~/shared/prompt.txt`）；产出 `~/shared/lora-images/<批次>/`；SMB `smb://guest@100.89.241.44/shared` |
-| 生视频 (H3) | furnance | `tools/h3_server.sh {start,stop,status,logs}`（GPU 1，:8091）；`tools/run_h3.sh --first … --last … --prompt …`；产出 `~/shared/h3-videos/<批次>/` |
+| 生图 (SDXL) | furnance | `tools/run_gen.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/lora-images/<批次>/`；SMB `smb://guest@100.89.241.44/shared` |
+| 生视频 (H3, ComfyUI 后端) | furnance | `tools/h3_server.sh {start,stop,status,logs}`（gpu1=索引0，:8188）；`tools/run_h3.sh --first … --last … --prompt …`；产出 `~/shared/h3-videos/<批次>/`；日志 `/mnt/elements/logs/h3-comfy.log` |
+| 生图 (Chroma) | furnance | `tools/run_chroma.sh <批次名>`（gpu2=索引1，读 `~/shared/prompt.txt`）；产出 `~/shared/chroma-images/<批次>/` |
 | dsh | runtime | `systemctl --user restart dsh.service`；unit 在 `~/.config/systemd/user/dsh.service`（含 `DSH_LOCAL_KEY` 与 node PATH） |
 | 备胎模型 | runtime | `systemctl --user status runtime-brain.service`（`127.0.0.1:8001`，alias `runtime-brain`） |
 | dsh 配置 | runtime | `~/.dsh/cordis.patch.yml`（provider 列表）、`~/.dsh/sessions/`（对话，多帧 zstd，第一帧只放头行） |

@@ -1,40 +1,36 @@
 #!/bin/bash
-# MiniMax H3 服务（vLLM-Omni）管理：start | stop | status | logs
+# MiniMax H3 后端（方案 B）：无界面 ComfyUI 服务管理 —— start | stop | status | logs
 #
-# - 单卡：默认 GPU 1（GPU 0 留给 SDXL 出图）；跑 H3 时 llama-brain 必须是停止状态（brain 占满两张卡）
-# - 权重：官方 bf16 MiniMaxAI/MiniMax-H3 的 FL2VA 分区，缓存在 HF_HOME=/mnt/elements/hf-cache（外接盘）
-# - 加载时 FP8 量化（DiT + 文本编码器）+ 模型级 CPU offload；内存常驻约 70 GB
-# - 首次启动要把 ~130 GB 权重读入并量化，可能 10–20 分钟；之后每条请求几分钟
-# 环境变量: H3_GPU(默认1) H3_PORT(8091) H3_TASK(fl2va)
+# - ComfyUI ~/ComfyUI（0.30.0，内置 H3 节点），conda 环境 comfy
+# - 权重：/mnt/elements/models/minimax-h3/（Comfy-Org 官方 int8 DiT + nvfp4 编码器 + 2 个 VAE，已软链进 ~/ComfyUI/models）
+# - 单卡：默认 GPU 索引 0（gen-mode: gpu1=视频, gpu2(索引1)=图片）；跑 H3 时 llama-brain 必须停（它占满两张卡）
+# - 只监听 127.0.0.1:8188，不开界面；由 tools/h3_comfy.py / tools/run_h3.sh 通过 HTTP API 驱动
+# 环境变量: H3_GPU(默认0 = gpu1 视频卡) COMFY_PORT(8188)
 set -u
-UNIT=h3-server
-VENV="$HOME/vllm-omni/.venv"
-H3_GPU="${H3_GPU:-1}"; H3_PORT="${H3_PORT:-8091}"; H3_TASK="${H3_TASK:-fl2va}"
-LOG=/mnt/elements/logs/h3-server.log
+UNIT=h3-comfy
+H3_GPU="${H3_GPU:-0}"; PORT="${COMFY_PORT:-8188}"
+PY="$HOME/miniforge3/envs/comfy/bin/python"
+LOG=/mnt/elements/logs/h3-comfy.log
 
 case "${1:-status}" in
   start)
     if [ "$(systemctl --user is-active llama-brain.service)" = active ]; then
       echo "⚠️  llama-brain 正在运行并占用两张卡。先: systemctl --user stop llama-brain.service"; exit 1
     fi
-    [ -x "$VENV/bin/vllm" ] || { echo "❌ 没找到 $VENV/bin/vllm（vLLM-Omni 未装好）"; exit 1; }
+    [ -x "$PY" ] || { echo "❌ 没找到 $PY"; exit 1; }
     systemctl --user reset-failed $UNIT.service 2>/dev/null
     mkdir -p "$(dirname "$LOG")"
-    systemd-run --user --unit=$UNIT --collect --description="MiniMax H3 (vLLM-Omni) on GPU $H3_GPU :$H3_PORT" \
-      -E HF_HOME=/mnt/elements/hf-cache -E HF_HUB_OFFLINE=1 \
-      -E CUDA_VISIBLE_DEVICES="$H3_GPU" -E VLLM_OMNI_VIDEO_SYNC_TIMEOUT=3600 -E VLLM_WORKER_MULTIPROC_METHOD=spawn \
-      -p WorkingDirectory="$HOME/vllm-omni" \
-      bash -c "source $VENV/bin/activate && exec vllm serve MiniMaxAI/MiniMax-H3 --omni --trust-remote-code \
-        --host 0.0.0.0 --port $H3_PORT --num-gpus 1 --enable-cpu-offload --quantization fp8 \
-        --task-type $H3_TASK --enforce-eager --diffusion-attention-backend FLASH_ATTN --vae-use-tiling \
-        >> $LOG 2>&1"
-    echo "🚀 已启动 $UNIT（GPU $H3_GPU，端口 $H3_PORT）。首次加载需 10–20 分钟。"
-    echo "   进度: tools/h3_server.sh logs    就绪判断: curl -s http://127.0.0.1:$H3_PORT/health"
+    systemd-run --user --unit=$UNIT --collect --description="ComfyUI headless for MiniMax H3 (GPU $H3_GPU :$PORT)" \
+      -E CUDA_VISIBLE_DEVICES="$H3_GPU" -E PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+      -p WorkingDirectory="$HOME/ComfyUI" \
+      bash -c "exec $PY main.py --listen 127.0.0.1 --port $PORT --disable-auto-launch --dont-print-server >> $LOG 2>&1"
+    echo "🚀 已启动 $UNIT（GPU $H3_GPU，端口 $PORT）。首个请求会加载权重（~40 GB，从外接盘读约 3–5 分钟）。"
     ;;
   stop)   systemctl --user stop $UNIT.service; echo "⏹  已停止 $UNIT";;
   status)
     echo "unit:   $(systemctl --user is-active $UNIT.service 2>/dev/null)"
-    echo "health: $(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:$H3_PORT/health 2>/dev/null || echo down)"
+    echo "api:    $(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/system_stats 2>/dev/null || echo down)"
+    curl -s -m 3 http://127.0.0.1:$PORT/queue 2>/dev/null | python3 -c "import sys,json; q=json.load(sys.stdin); print(f'queue:  running={len(q.get(\"queue_running\",[]))} pending={len(q.get(\"queue_pending\",[]))}')" 2>/dev/null
     nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
     free -g | awk 'NR==2{print "RAM used/total: "$3"/"$2" GB"}'
     ;;
