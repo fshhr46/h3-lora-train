@@ -231,6 +231,31 @@ tools/genq.py status | list [-q image|video] [-s pending|running|done|failed] | 
 
 ---
 
+## 7. 睡眠 / Wake-on-LAN（省电，2026-08-22）
+
+furnance、runtime、bastion 都在同一局域网 `10.0.0.0/24`（furnance .182 MAC 58:11:22:c5:76:0a；runtime .171 MAC 70:85:c2:b2:d2:e6；bastion .168）。两台 Linux 机可 suspend-to-RAM，用 WoL 魔术包唤醒（约 5–10 秒回来，是唤醒不是重启，服务/显存都恢复）。**前提**：机器始终插网线+通电（睡眠时网卡靠待机电流监听魔术包）；poweroff 后无法 WoL，只有 suspend 可以。
+
+已配置（一次性）：
+- polkit pkla `/etc/polkit-1/localauthority/50-local.d/49-nopasswd-suspend.pkla` → 允许 fshhr46 远程（无本地 seat）`systemctl suspend`，不需 sudo。
+- NVIDIA 显存保留挂起：`/etc/modprobe.d/nvidia-power-mgmt.conf`（`NVreg_PreserveVideoMemoryAllocations=1`）+ 解封并启用 `nvidia-suspend/resume.service`。**没有这个，两张 4090 / 2070 的挂起会因 `nv_pmops_suspend returns -5`（I/O error）失败**。改后需重启一次。
+- WoL 已在网卡开启（`ethtool eno1` → Wake-on: g）。
+
+在 bastion 上操作（`~/bin/`）：
+```bash
+zzz furnance      # ssh 让它睡（若有 GPU 任务在跑会挂起失败，提示还在线）
+wake furnance     # 发 WoL 唤醒并等到可 ssh
+zzz runtime / wake runtime
+python3 ~/bin/wake.py <furnance|runtime|MAC> [子网广播]   # 只发包
+```
+从 runtime/furnance 互相唤醒同理（同网段），发包：`python3 - <<'PY' ...` 或装 `wakeonlan`。
+
+注意：
+- 挂起前最好先停占显存的服务（furnance 的 llama-brain 占满 45 GB，挂起会把显存写盘，很慢）；`zzz` 只发 suspend，不自动停服务。
+- runtime 睡了的话 dsh（https://runtime.tail97d99a.ts.net/）也随之下线，`wake runtime` 唤醒后自动恢复。
+- suspend 期间 Tailscale 也断，要靠 WoL（LAN 内）唤醒，不能靠 tailnet。
+
+---
+
 ## 4. 相关服务速查
 
 | 服务 | 主机 | 命令 |
