@@ -1,5 +1,5 @@
 # Negative prompt templates
-# Used during training and generation to exclude unwanted content
+# Used during generation to exclude unwanted content
 
 low quality
 worst quality
@@ -33,7 +33,7 @@ lowres
 monochrome
 grayscale
 
-# Unwanted clothing
+# Unwanted clothing (too covering)
 jacket
 coat
 hoodie
@@ -51,3 +51,14 @@ street scene
 busy background
 outdoor festival
 concert
+
+# Unwanted styles
+cartoon
+anime
+3D render
+pixel art
+childish
+mature man
+old man
+beard
+mustache

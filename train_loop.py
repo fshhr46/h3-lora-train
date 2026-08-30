@@ -36,7 +36,7 @@ from pathlib import Path
 # ─────────────────────────────────────────────────────
 # Configuration (editable)
 # ─────────────────────────────────────────────────────
-BRAIN_PROCESS_NAME = "qwen3.6b"       # Process name to kill
+BRAIN_PROCESS_NAME = "llama-server"    # Actual process name (llama.cpp server)
 BRAIN_CMD = None                      # Command to restart brain (None = don't restart)
 # Example: "nohup python -m qwen_server --model qwen3.6b > /dev/null 2>&1 &"
 

@@ -122,29 +122,42 @@ def extract_images(video_dir, output_dir, fps_target=8, resolution=(512, 512),
         while frame_idx < total_frames and extracted < max_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
-            if not ret:
+            if not ret or frame is None:
                 break
+
+            if frame.size == 0 or frame.shape[0] == 0:
+                frame_idx += sample_interval
+                continue
 
             if frame_idx % sample_interval == 0:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                 # 裁剪
                 h, w = frame_rgb.shape[:2]
+                if h == 0 or w == 0:
+                    frame_idx += sample_interval
+                    continue
+
                 target_w, target_h = resolution
+
+                # Scale to target aspect ratio, then crop center
                 if w / h < target_w / target_h:
                     new_w, new_h = w, int(w * target_h / target_w)
                 else:
                     new_h, new_w = h, int(h * target_w / target_h)
 
-                left = (new_w - target_w) // 2
-                top = (new_h - target_h) // 2
+                left = max(0, (new_w - target_w) // 2)
+                top = max(0, (new_h - target_h) // 2)
                 cropped = frame_rgb[top:top+target_h, left:left+target_w]
 
                 # 保存为 PNG
-                output_path = output_dir / f"{video_path.stem}_frame_{extracted:04d}.png"
-                pil_img = Image.fromarray(cropped)
-                pil_img.save(str(output_path), 'PNG')
-                extracted += 1
+                if cropped.size > 0 and cropped.shape[0] > 0 and cropped.shape[1] > 0:
+                    output_path = output_dir / f"{video_path.stem}_frame_{extracted:04d}.png"
+                    pil_img = Image.fromarray(cropped)
+                    pil_img.save(str(output_path), 'PNG')
+                    extracted += 1
+                else:
+                    print(f"    ⚠️  Skipped empty frame at idx {frame_idx}", file=sys.stderr)
 
             frame_idx += sample_interval
 
@@ -338,7 +351,7 @@ def extract_frame_diff(video_dir, output_dir, resolution=(256, 256)):
 def main():
     parser = argparse.ArgumentParser(
         description='增强版预处理脚本',
-        formatter_class=argparse.RawTextHelp
+        formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument('--mode', type=str, required=True,
                         choices=['images', 'temporal', 'framediff'],

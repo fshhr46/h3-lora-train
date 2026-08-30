@@ -1,5 +1,5 @@
-# Positive prompt templates for LoRA training
-# Used for data captioning and generation
+# Positive prompt templates for LoRA generation - Sexy/NSFW style
+# Used during generation with trained LoRA
 
 # Base description
 beautiful woman
@@ -7,14 +7,24 @@ attractive female
 young woman
 elegant lady
 gorgeous woman
+hot woman
 
 # Body / pose
 graceful pose
 curvy figure
 slim figure
 beautiful silhouette
-gentle movement
-relaxed posture
+big breasts
+wide hips
+small waist
+cleavage
+perky breasts
+plump lips
+seductive smile
+aroused expression
+heavy breathing
+arched back
+spread legs
 
 # Clothing / material
 silky dress
@@ -26,6 +36,14 @@ lingerie
 evening gown
 tight dress
 flowing dress
+lace bra
+lace panties
+silk robe
+g-string
+thong
+bikini
+bra only
+panties only
 
 # Clothing state
 dress slightly lifted
@@ -36,6 +54,60 @@ slightly sheer
 fabric draping
 dress falling open
 straps slipping
+bra unclasped
+skirt lifted up
+top half naked
+bottom half naked
+see-through
+transparent
+wet and see-through
+bra visible through shirt
+push-up bra visible
+nipple outline
+nipples showing
+cleavage deep
+thong visible through dress
+dress open
+topless
+bottomless
+no bra
+no panties
+skirt around ankles
+pants down
+shirt pulled up
+dress unzipped
+
+# Exposed body parts
+bare chest
+bare back
+bare legs
+bare thighs
+bare shoulders
+exposed collarbone
+midriff exposed
+navel visible
+ass visible
+butt cheeks
+deep cleavage
+nipples
+nipple
+nipple detail
+nubbed nipples
+areola visible
+pussy
+vulva
+labia
+mons
+cleft
+navel
+belly button
+cleavage deep
+full breasts
+bare breasts
+topless
+bottomless
+no bra
+no panties
 
 # Scene / environment
 bedroom morning light
@@ -46,6 +118,11 @@ luxury interior
 garden sunlight
 poolside
 bathroom steam
+hotel room
+kitchen
+living room
+bunk bed
+rooftop
 
 # Lighting / style
 cinematic lighting
@@ -57,6 +134,9 @@ moonlight glow
 natural lighting
 film grain
 slow motion
+mood lighting
+candlelight
+neon lights
 
 # Camera
 close up
@@ -64,3 +144,23 @@ medium shot
 portrait angle
 gentle camera pan
 slow zoom
+low angle
+high angle
+over shoulder
+from behind
+looking back
+sitting on edge of bed
+leaning forward
+on all fours
+
+# Action
+biting lip
+arching back
+hands in hair
+hands on hips
+arching back
+lying on bed
+kneeling
+sitting on chair
+standing by window
+looking at camera seductively
